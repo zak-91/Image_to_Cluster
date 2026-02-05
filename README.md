@@ -89,221 +89,147 @@ Cet atelier, **noté sur 20 points**, est évalué sur la base du barème suivan
 - Qualité du Readme (lisibilité, erreur, ...) (4 points)
 - Processus travail (quantité de commits, cohérence globale, interventions externes, ...) (4 points) 
 
+exercice 3 :
 
-Ce tutoriel explique toutes les étapes nécessaires pour :
+Automatisation complète avec Makefile, Packer, Ansible & Kubernetes (K3d)
 
-✅ Construire une image Docker customisée via Packer
-✅ Importer cette image dans un cluster K3d
-✅ Déployer automatiquement l’application via Ansible
-✅ Accéder à l’application via Kubernetes
+Ce projet permet de construire automatiquement une image Docker customisée, puis de la déployer sur un cluster Kubernetes K3d, le tout dans GitHub Codespaces.
 
-L’ensemble est conçu pour être exécuté dans GitHub Codespaces.
+L'objectif : industrialiser un pipeline complet
+➡️ Code → Image → Cluster Kubernetes → Service en ligne
 
-🧩 1. Installer Ansible
-sudo apt-get update
-sudo apt-get install -y ansible
-ansible --version
+Ce repository inclut un Makefile qui automatise toutes les étapes techniques de l'exercice.
 
-📦 2. Préparer la structure Packer
+🧰 2. Le pipeline complet (100% automatisé)
 
-Créer le dossier :
+Au lieu de taper manuellement les commandes Packer / Docker / Ansible / Kubernetes,
+un seul Makefile orchestre l’ensemble du workflow.
 
-mkdir -p packer
+🎯 Commande principale :
 
-
-Créer le fichier de configuration Packer :
-
-cat > packer/nginx.pkr.hcl <<'EOF'
-packer {
-
-  required_plugins {
-
-    docker = {
-
-      version = ">= 1.0.0"
-
-      source  = "github.com/hashicorp/docker"
-
-    }
-
-  }
-
-}
- 
-variable "image_name" {
-
-  type    = string
-
-  default = "nginx-custom:1.0"
-
-}
- 
-source "docker" "nginx" {
-
-  image  = "nginx:alpine"
-
-  commit = true
-
-}
- 
-build {
-
-  sources = ["source.docker.nginx"]
- 
-  provisioner "shell" {
-
-    inline = [
-
-      "mkdir -p /usr/share/nginx/html",
-
-      "rm -f /usr/share/nginx/html/*"
-
-    ]
-
-  }
- 
-  provisioner "file" {
-
-    source      = "../index.html"
-
-    destination = "/usr/share/nginx/html/index.html"
-
-  }
- 
-  provisioner "shell" {
-
-    inline = [
-
-      "ls -la /usr/share/nginx/html",
-
-      "nginx -v || true"
-
-    ]
-
-  }
- 
-  post-processor "docker-tag" {
-
-    repository = "nginx-custom"
-
-    tag = ["1.0"]
-
-  }
-
-}
-EOF
-
-🐳 3. Build de l’image Docker customisée
-
-Se placer à la racine :
-
-cd /workspaces/Image_to_Cluster
+make all
 
 
-Initialiser Packer :
+Cette commande exécute successivement :
 
-cd packer
+make install
+
+make build-image
+
+make deploy
+
+make status
+
+À la fin, votre application customisée tourne dans votre cluster K3d 🎉
+
+🧩 3. Détails : ce que fait le Makefile
+
+Voici une explication pédagogique, section par section.
+
+📦 A. Installation — make install
+
+Cette étape installe toutes les dépendances nécessaires :
+
+✔️ Nettoyage des dépôts APT cassés
+
+Certaines images Codespaces contiennent un dépôt Yarn obsolète → le Makefile le désactive automatiquement.
+
+✔️ Installation automatique de :
+
+Ansible
+
+Packer 1.11.2
+
+k3d
+
+kubectl
+
+✔️ Vérification
+
+À la fin, les versions installées sont affichées :
+
+packer version
+k3d --version
+
+
+👉 C’est l’équivalent d’un bootstrap complet de votre workstation DevOps.
+
+🐳 B. Build de l’image — make build-image
+
+Cette étape :
+
+Initialise Packer :
+
 packer init .
+
+Corrige automatiquement le tag si nécessaire (bug Packer classique).
+
+Lance la construction de l’image Docker Nginx + index.html :
+
 packer build .
-cd ..
 
 
-Vérification :
+Vérifie l’image :
 
 docker images | grep nginx-custom
 
-🧰 4. Correction si nécessaire du fichier Packer
 
-(Si une erreur de type tag must be a list apparaît)
+🔎 L'image générée est :
+nginx-custom:1.0
 
-sed -i 's/tag *= *"1.0"/tag = ["1.0"]/g' nginx.pkr.hcl
-packer build .
+☸️ C. Déploiement sur K3d — make deploy
 
-☸️ 5. Importer l’image dans K3d
+Étape clé !
+Cette commande fait 4 choses essentielles :
+
+1️⃣ Création du cluster K3d (si absent)
+k3d cluster create lab
+
+2️⃣ Import de l’image dans le runtime Kubernetes
 k3d image import nginx-custom:1.0 -c lab
 
-📁 6. Création des fichiers Kubernetes
-
-Créer le dossier :
-
-mkdir -p k8s
-
-Deployment :
-cat > k8s/deployment.yml <<'EOF'
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: nginx-custom
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: nginx-custom
-  template:
-    metadata:
-      labels:
-        app: nginx-custom
-    spec:
-      containers:
-        - name: nginx
-          image: nginx-custom:1.0
-          imagePullPolicy: IfNotPresent
-          ports:
-            - containerPort: 80
-EOF
-
-Service :
-cat > k8s/service.yml <<'EOF'
-apiVersion: v1
-kind: Service
-metadata:
-  name: nginx-custom
-spec:
-  type: NodePort
-  selector:
-    app: nginx-custom
-  ports:
-    - port: 80
-      targetPort: 80
-EOF
-
-🤖 7. Déploiement via Ansible
-
-Créer le dossier :
-
-mkdir -p ansible
-
-
-Créer le playbook :
-
-cat > ansible/deploy.yml <<'EOF'
-- name: Deploy nginx-custom to k3d
-  hosts: localhost
-  gather_facts: false
-  tasks:
-    - name: Apply manifests
-      ansible.builtin.command: kubectl apply -f ../k8s/
-    - name: Wait rollout
-      ansible.builtin.command: kubectl rollout status deployment/nginx-custom --timeout=120s
-    - name: Show pods & svc
-      ansible.builtin.command: kubectl get pods,svc -o wide
-      register: out
-    - debug:
-        var: out.stdout_lines
-EOF
-
-
-Lancer le déploiement :
-
+3️⃣ Lancement du playbook Ansible
 ansible-playbook ansible/deploy.yml
 
-🌍 8. Accéder à l’application
 
-Forward du port :
+Ce playbook :
 
-kubectl port-forward svc/nginx-custom 8081:80 >/tmp/app.log 2>&1 &
+applique les manifests Kubernetes (k8s/)
+
+attend le rollout du déploiement
+
+affiche pods & services
+
+4️⃣ Exposition de l’application (port-forward)
+kubectl port-forward svc/nginx-custom 8081:80 &
 
 
-Dans GitHub Codespaces → PORTS → rendre 8081 public → ouvrir dans le navigateur.
+➡️ L’application devient accessible sur
+👉 http://localhost:8081
 
-✔️ Votre application Nginx customisée est maintenant en ligne !
+🧪 D. Vérification — make status
+
+Affiche :
+
+les nœuds Kubernetes
+
+les pods
+
+l’URL de l’application
+
+🌐 4. Accéder à l'application
+
+Dans Codespaces → onglet PORTS
+➡️ Rendez public le port 8081
+
+Ouvrez l'URL dans votre navigateur.
+
+Vous devriez voir votre page Nginx customisée 🎉
+
+🗂️ 5. Architecture finale
+Packer → Image Docker → Import K3d → Ansible → K8s Deployment → Service → Port-forward
+
+
+🎯 Le tout automatisé via :
+
+make all

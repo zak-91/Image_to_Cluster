@@ -90,3 +90,220 @@ Cet atelier, **noté sur 20 points**, est évalué sur la base du barème suivan
 - Processus travail (quantité de commits, cohérence globale, interventions externes, ...) (4 points) 
 
 
+Ce tutoriel explique toutes les étapes nécessaires pour :
+
+✅ Construire une image Docker customisée via Packer
+✅ Importer cette image dans un cluster K3d
+✅ Déployer automatiquement l’application via Ansible
+✅ Accéder à l’application via Kubernetes
+
+L’ensemble est conçu pour être exécuté dans GitHub Codespaces.
+
+🧩 1. Installer Ansible
+sudo apt-get update
+sudo apt-get install -y ansible
+ansible --version
+
+📦 2. Préparer la structure Packer
+
+Créer le dossier :
+
+mkdir -p packer
+
+
+Créer le fichier de configuration Packer :
+
+cat > packer/nginx.pkr.hcl <<'EOF'
+packer {
+
+  required_plugins {
+
+    docker = {
+
+      version = ">= 1.0.0"
+
+      source  = "github.com/hashicorp/docker"
+
+    }
+
+  }
+
+}
+ 
+variable "image_name" {
+
+  type    = string
+
+  default = "nginx-custom:1.0"
+
+}
+ 
+source "docker" "nginx" {
+
+  image  = "nginx:alpine"
+
+  commit = true
+
+}
+ 
+build {
+
+  sources = ["source.docker.nginx"]
+ 
+  provisioner "shell" {
+
+    inline = [
+
+      "mkdir -p /usr/share/nginx/html",
+
+      "rm -f /usr/share/nginx/html/*"
+
+    ]
+
+  }
+ 
+  provisioner "file" {
+
+    source      = "../index.html"
+
+    destination = "/usr/share/nginx/html/index.html"
+
+  }
+ 
+  provisioner "shell" {
+
+    inline = [
+
+      "ls -la /usr/share/nginx/html",
+
+      "nginx -v || true"
+
+    ]
+
+  }
+ 
+  post-processor "docker-tag" {
+
+    repository = "nginx-custom"
+
+    tag = ["1.0"]
+
+  }
+
+}
+EOF
+
+🐳 3. Build de l’image Docker customisée
+
+Se placer à la racine :
+
+cd /workspaces/Image_to_Cluster
+
+
+Initialiser Packer :
+
+cd packer
+packer init .
+packer build .
+cd ..
+
+
+Vérification :
+
+docker images | grep nginx-custom
+
+🧰 4. Correction si nécessaire du fichier Packer
+
+(Si une erreur de type tag must be a list apparaît)
+
+sed -i 's/tag *= *"1.0"/tag = ["1.0"]/g' nginx.pkr.hcl
+packer build .
+
+☸️ 5. Importer l’image dans K3d
+k3d image import nginx-custom:1.0 -c lab
+
+📁 6. Création des fichiers Kubernetes
+
+Créer le dossier :
+
+mkdir -p k8s
+
+Deployment :
+cat > k8s/deployment.yml <<'EOF'
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-custom
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nginx-custom
+  template:
+    metadata:
+      labels:
+        app: nginx-custom
+    spec:
+      containers:
+        - name: nginx
+          image: nginx-custom:1.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 80
+EOF
+
+Service :
+cat > k8s/service.yml <<'EOF'
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-custom
+spec:
+  type: NodePort
+  selector:
+    app: nginx-custom
+  ports:
+    - port: 80
+      targetPort: 80
+EOF
+
+🤖 7. Déploiement via Ansible
+
+Créer le dossier :
+
+mkdir -p ansible
+
+
+Créer le playbook :
+
+cat > ansible/deploy.yml <<'EOF'
+- name: Deploy nginx-custom to k3d
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Apply manifests
+      ansible.builtin.command: kubectl apply -f ../k8s/
+    - name: Wait rollout
+      ansible.builtin.command: kubectl rollout status deployment/nginx-custom --timeout=120s
+    - name: Show pods & svc
+      ansible.builtin.command: kubectl get pods,svc -o wide
+      register: out
+    - debug:
+        var: out.stdout_lines
+EOF
+
+
+Lancer le déploiement :
+
+ansible-playbook ansible/deploy.yml
+
+🌍 8. Accéder à l’application
+
+Forward du port :
+
+kubectl port-forward svc/nginx-custom 8081:80 >/tmp/app.log 2>&1 &
+
+
+Dans GitHub Codespaces → PORTS → rendre 8081 public → ouvrir dans le navigateur.
+
+✔️ Votre application Nginx customisée est maintenant en ligne !

@@ -220,7 +220,6 @@ l’URL de l’application
 🌐 4. Accéder à l'application
 
 Dans Codespaces → onglet PORTS
-➡️ Rendez public le port 8081
 
 Ouvrez l'URL dans votre navigateur.
 
